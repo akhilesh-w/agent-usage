@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Agent Readout</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="sb-scroll">
+        <div class="sb-section">
+          <div class="sb-heading">Overview</div>
+          <button type="button" class="sb-item active" data-view="overview">
+            <span class="sb-ico">◈</span> Readout
+          </button>
+        </div>
+
+        <div class="sb-section">
+          <div class="sb-heading">Monitor</div>
+          <button type="button" class="sb-item" data-view="sessions">
+            <span class="sb-ico">◎</span> Sessions
+          </button>
+          <button type="button" class="sb-item" data-view="costs">
+            <span class="sb-ico">$</span> Costs
+          </button>
+        </div>
+
+        <div class="sb-section">
+          <div class="sb-heading">Sources</div>
+          <label class="sb-check"><input type="checkbox" data-agent="claude" checked /> Claude Code</label>
+          <label class="sb-check"><input type="checkbox" data-agent="codex" checked /> Codex</label>
+          <label class="sb-check"><input type="checkbox" data-agent="pi" checked /> pi</label>
+        </div>
+      </div>
+
+      <div class="sb-foot">
+        <button type="button" id="refresh" class="sb-settings">↻ Refresh</button>
+        <div id="meta" class="sb-meta"></div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <!-- OVERVIEW -->
+      <section id="view-overview" class="view">
+        <header class="hero">
+          <h1 id="greeting">Overview</h1>
+          <p id="summary" class="summary"></p>
+        </header>
+
+        <div class="stat-row" id="stat-row"></div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-h">
+              <div class="card-title"><span class="tint blue">▮▮</span> Activity <span class="muted">30d</span></div>
+            </div>
+            <canvas id="chart-activity" height="110"></canvas>
+          </div>
+          <div class="card">
+            <div class="card-h">
+              <div class="card-title"><span class="tint green">◉</span> Cost trend <span class="muted">30d</span></div>
+            </div>
+            <canvas id="chart-cost" height="110"></canvas>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-h">
+              <div class="card-title"><span class="tint gold">$</span> Cost by Model</div>
+              <button type="button" class="chev" data-goto="costs">›</button>
+            </div>
+            <div id="model-bars" class="model-bars"></div>
+            <div class="card-total" id="model-total"></div>
+          </div>
+          <div class="card">
+            <div class="card-h">
+              <div class="card-title"><span class="tint blue">💬</span> Recent Sessions</div>
+              <button type="button" class="chev" data-goto="sessions">›</button>
+            </div>
+            <div id="overview-sessions" class="recent-list"></div>
+          </div>
+        </div>
+
+        <div class="card insight" id="insight-card"></div>
+
+        <div class="section-label">Projects</div>
+        <div id="project-chips" class="chips"></div>
+
+        <div class="grid-4" id="bottom-cards"></div>
+      </section>
+
+      <!-- SESSIONS -->
+      <section id="view-sessions" class="view hidden">
+        <header class="hero">
+          <h1>Sessions</h1>
+          <p class="summary" id="sessions-summary"></p>
+        </header>
+        <div class="toolbar">
+          <div class="search">
+            <span>⌕</span>
+            <input id="session-q" type="search" placeholder="Filter sessions" />
+          </div>
+        </div>
+        <div class="card flush">
+          <div id="sessions-list" class="session-table"></div>
+        </div>
+      </section>
+
+      <!-- COSTS -->
+      <section id="view-costs" class="view hidden">
+        <header class="hero">
+          <h1>Costs</h1>
+          <p class="summary">Estimated API spend from local session logs</p>
+        </header>
+        <div class="seg" id="cost-period">
+          <button type="button" data-period="today">Today</button>
+          <button type="button" data-period="week">This Week</button>
+          <button type="button" data-period="month">This Month</button>
+          <button type="button" data-period="all" class="on">All Time</button>
+        </div>
+        <div class="stat-row" id="cost-stats"></div>
+        <div class="card flush">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Model</th>
+                <th class="num">Cost</th>
+                <th class="num">Share</th>
+                <th class="num">Input</th>
+                <th class="num">Output</th>
+                <th class="num">Cache r</th>
+                <th class="num">Cache w</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="costs-body"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,3 @@
+# Core (web target) needs only the stdlib.
+# Optional desktop webview:
+#   pip install -r desktop/webview/requirements.txt

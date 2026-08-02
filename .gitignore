@@ -1,0 +1,25 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+.DS_Store
+.idea/
+.vscode/
+
+# Electron
+desktop/electron/node_modules/
+desktop/electron/dist/
+desktop/electron/out/
+
+# PyInstaller / webview builds
+desktop/webview/build/
+desktop/webview/dist/
+desktop/webview/*.spec
+dist/
+build/
+
+# Local caches
+.cache/
+*.log

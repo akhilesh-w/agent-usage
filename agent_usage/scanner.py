@@ -85,9 +85,11 @@ class SessionSummary:
 
 
 class Pricing:
-    def __init__(self, path: Path = PRICING_PATH) -> None:
+    def __init__(self, path: Path | None = None) -> None:
+        path = path or _pricing_path()
         self.by_id: dict[str, dict[str, float]] = {}
         self.meta: dict[str, dict[str, Any]] = {}
+        self._resolve_cache: dict[str, tuple[dict[str, float], str]] = {}
         if path.exists():
             raw = json.loads(path.read_text())
             for mid, entry in raw.items():
@@ -105,25 +107,35 @@ class Pricing:
     def rates_for(self, model: str | None) -> tuple[dict[str, float], str]:
         if not model or model in ("None", "<synthetic>"):
             return {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}, "unknown"
+        cached = self._resolve_cache.get(model)
+        if cached is not None:
+            return cached
         key = model.lower().strip()
-        # strip suffixes like [1m]
         key = re.sub(r"\[.*?\]", "", key).strip()
+        result: tuple[dict[str, float], str]
         if key in self.by_id:
-            return self.by_id[key], "catalog"
-        # try bare after slash
-        if "/" in key:
-            bare = key.rsplit("/", 1)[-1]
+            result = (self.by_id[key], "catalog")
+        else:
+            bare = key.rsplit("/", 1)[-1] if "/" in key else key
             if bare in self.by_id:
-                return self.by_id[bare], "catalog"
-        # fuzzy contains match preferring longer ids
-        candidates = [k for k in self.by_id if k in key or key in k]
-        if candidates:
-            best = max(candidates, key=len)
-            return self.by_id[best], "fuzzy"
-        for rx, rates in FAMILY_RATES:
-            if rx.search(key):
-                return dict(rates), "family"
-        return {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}, "missing"
+                result = (self.by_id[bare], "catalog")
+            else:
+                candidates = [k for k in self.by_id if k in key or key in k]
+                if candidates:
+                    best = max(candidates, key=len)
+                    result = (self.by_id[best], "fuzzy")
+                else:
+                    matched = None
+                    for rx, rates in FAMILY_RATES:
+                        if rx.search(key):
+                            matched = (dict(rates), "family")
+                            break
+                    result = matched or (
+                        {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+                        "missing",
+                    )
+        self._resolve_cache[model] = result
+        return result
 
 
 def _parse_ts(value: Any) -> datetime | None:
@@ -212,12 +224,16 @@ def _bucket_from_pi_usage(usage: dict[str, Any]) -> TokenBucket:
     )
 
 
-def scan_claude_file(path: Path, pricing: Pricing) -> SessionSummary | None:
+def scan_claude_file(
+    path: Path, pricing: Pricing
+) -> tuple[SessionSummary | None, dict[str, dict[str, TokenBucket]]]:
+    """Single pass: session summary + day→model buckets."""
     session_id = path.stem
     cwd = None
     started = None
     updated = None
     models: dict[str, TokenBucket] = defaultdict(TokenBucket)
+    daily: dict[str, dict[str, TokenBucket]] = defaultdict(lambda: defaultdict(TokenBucket))
     preview = None
     cost = 0.0
 
@@ -256,23 +272,26 @@ def scan_claude_file(path: Path, pricing: Pricing) -> SessionSummary | None:
             msg = obj.get("message") or {}
             if not isinstance(msg, dict):
                 continue
-            model = msg.get("model") or "unknown"
+            model = str(msg.get("model") or "unknown")
             usage = msg.get("usage")
             if not isinstance(usage, dict):
                 continue
             b = _bucket_from_claude_usage(usage)
-            models[str(model)].add(b)
-            rates, _ = pricing.rates_for(str(model))
+            models[model].add(b)
+            rates, _ = pricing.rates_for(model)
             cost += b.cost(rates)
+            day = _day_key(ts)
+            if day:
+                daily[day][model].add(b)
 
     if not models and not started:
-        return None
+        return None, daily
 
     totals = TokenBucket()
     for b in models.values():
         totals.add(b)
 
-    return SessionSummary(
+    summary = SessionSummary(
         id=session_id,
         agent="claude",
         cwd=cwd,
@@ -290,35 +309,19 @@ def scan_claude_file(path: Path, pricing: Pricing) -> SessionSummary | None:
         message_preview=preview,
         path=str(path),
     )
+    return summary, daily
 
 
-def scan_claude_file_daily(path: Path, pricing: Pricing) -> dict[str, dict[str, TokenBucket]]:
-    """day -> model -> tokens"""
-    daily: dict[str, dict[str, TokenBucket]] = defaultdict(lambda: defaultdict(TokenBucket))
-    for obj in _iter_jsonl(path):
-        if obj.get("type") != "assistant":
-            continue
-        msg = obj.get("message") or {}
-        if not isinstance(msg, dict):
-            continue
-        usage = msg.get("usage")
-        if not isinstance(usage, dict):
-            continue
-        model = str(msg.get("model") or "unknown")
-        day = _day_key(_parse_ts(obj.get("timestamp")))
-        if not day:
-            continue
-        daily[day][model].add(_bucket_from_claude_usage(usage))
-    return daily
-
-
-def scan_codex_file(path: Path, pricing: Pricing) -> SessionSummary | None:
+def scan_codex_file(
+    path: Path, pricing: Pricing
+) -> tuple[SessionSummary | None, dict[str, dict[str, TokenBucket]]]:
     session_id = path.stem
     cwd = None
     started = None
     updated = None
     current_model = "unknown"
     models: dict[str, TokenBucket] = defaultdict(TokenBucket)
+    daily: dict[str, dict[str, TokenBucket]] = defaultdict(lambda: defaultdict(TokenBucket))
     cost = 0.0
     preview = None
 
@@ -341,7 +344,6 @@ def scan_codex_file(path: Path, pricing: Pricing) -> SessionSummary | None:
                 current_model = str(pl.get("model"))
             cwd = pl.get("cwd") or cwd
 
-        # user message preview
         if preview is None and t == "response_item":
             if pl.get("type") == "message" and pl.get("role") == "user":
                 content = pl.get("content")
@@ -365,15 +367,18 @@ def scan_codex_file(path: Path, pricing: Pricing) -> SessionSummary | None:
             models[model].add(b)
             rates, _ = pricing.rates_for(model)
             cost += b.cost(rates)
+            day = _day_key(ts)
+            if day:
+                daily[day][model].add(b)
 
     if not models and not started:
-        return None
+        return None, daily
 
     totals = TokenBucket()
     for b in models.values():
         totals.add(b)
 
-    return SessionSummary(
+    summary = SessionSummary(
         id=session_id,
         agent="codex",
         cwd=cwd,
@@ -391,33 +396,12 @@ def scan_codex_file(path: Path, pricing: Pricing) -> SessionSummary | None:
         message_preview=preview,
         path=str(path),
     )
+    return summary, daily
 
 
-def scan_codex_file_daily(path: Path, pricing: Pricing) -> dict[str, dict[str, TokenBucket]]:
-    daily: dict[str, dict[str, TokenBucket]] = defaultdict(lambda: defaultdict(TokenBucket))
-    current_model = "unknown"
-    for obj in _iter_jsonl(path):
-        pl = obj.get("payload") if isinstance(obj.get("payload"), dict) else {}
-        t = obj.get("type")
-        if t == "turn_context" or pl.get("type") == "turn_context":
-            if pl.get("model"):
-                current_model = str(pl.get("model"))
-        if t == "session_meta" and pl.get("model"):
-            current_model = str(pl.get("model"))
-        if t == "event_msg" and pl.get("type") == "token_count":
-            info = pl.get("info") or {}
-            last = info.get("last_token_usage") or {}
-            if not isinstance(last, dict) or not last:
-                continue
-            day = _day_key(_parse_ts(obj.get("timestamp")))
-            if not day:
-                continue
-            model = str(info.get("model") or current_model or "unknown")
-            daily[day][model].add(_bucket_from_codex_last(last))
-    return daily
-
-
-def scan_pi_file(path: Path, pricing: Pricing) -> SessionSummary | None:
+def scan_pi_file(
+    path: Path, pricing: Pricing
+) -> tuple[SessionSummary | None, dict[str, dict[str, TokenBucket]]]:
     session_id = path.stem
     cwd = None
     started = None
@@ -425,6 +409,7 @@ def scan_pi_file(path: Path, pricing: Pricing) -> SessionSummary | None:
     provider = None
     model_id = None
     models: dict[str, TokenBucket] = defaultdict(TokenBucket)
+    daily: dict[str, dict[str, TokenBucket]] = defaultdict(lambda: defaultdict(TokenBucket))
     cost = 0.0
     preview = None
 
@@ -460,14 +445,21 @@ def scan_pi_file(path: Path, pricing: Pricing) -> SessionSummary | None:
             usage = msg.get("usage")
             if role == "assistant" and isinstance(usage, dict):
                 mid = str(msg.get("model") or model_id or "unknown")
-                # pi sometimes stores provider/model separately
-                if provider and "/" not in mid and not mid.startswith("grok") and not mid.startswith("gpt") and not mid.startswith("claude"):
+                if (
+                    provider
+                    and "/" not in mid
+                    and not mid.startswith("grok")
+                    and not mid.startswith("gpt")
+                    and not mid.startswith("claude")
+                ):
                     label = f"{provider}/{mid}"
                 else:
                     label = mid
                 b = _bucket_from_pi_usage(usage)
                 models[label].add(b)
-                # Prefer embedded cost if present (already priced by pi)
+                day = _day_key(ts)
+                if day:
+                    daily[day][label].add(b)
                 embedded = usage.get("cost")
                 if isinstance(embedded, dict) and embedded.get("total") is not None:
                     cost += float(embedded.get("total") or 0)
@@ -476,13 +468,13 @@ def scan_pi_file(path: Path, pricing: Pricing) -> SessionSummary | None:
                     cost += b.cost(rates)
 
     if not models and not started:
-        return None
+        return None, daily
 
     totals = TokenBucket()
     for b in models.values():
         totals.add(b)
 
-    return SessionSummary(
+    summary = SessionSummary(
         id=session_id,
         agent="pi",
         cwd=cwd,
@@ -500,28 +492,7 @@ def scan_pi_file(path: Path, pricing: Pricing) -> SessionSummary | None:
         message_preview=preview,
         path=str(path),
     )
-
-
-def scan_pi_file_daily(path: Path, pricing: Pricing) -> dict[str, dict[str, TokenBucket]]:
-    daily: dict[str, dict[str, TokenBucket]] = defaultdict(lambda: defaultdict(TokenBucket))
-    model_id = "unknown"
-    for obj in _iter_jsonl(path):
-        if obj.get("type") == "model_change":
-            model_id = str(obj.get("modelId") or model_id)
-        if obj.get("type") != "message":
-            continue
-        msg = obj.get("message") or {}
-        if not isinstance(msg, dict) or msg.get("role") != "assistant":
-            continue
-        usage = msg.get("usage")
-        if not isinstance(usage, dict):
-            continue
-        day = _day_key(_parse_ts(obj.get("timestamp")))
-        if not day:
-            continue
-        mid = str(msg.get("model") or model_id)
-        daily[day][mid].add(_bucket_from_pi_usage(usage))
-    return daily
+    return summary, daily
 
 
 def _claude_paths() -> list[Path]:
@@ -560,70 +531,79 @@ def build_report(agents: Iterable[str] | None = None) -> dict[str, Any]:
     sessions: list[SessionSummary] = []
     # day -> model -> TokenBucket
     daily_models: dict[str, dict[str, TokenBucket]] = defaultdict(lambda: defaultdict(TokenBucket))
-    # model totals
-    model_totals: dict[str, TokenBucket] = defaultdict(TokenBucket)
-    model_cost: dict[str, float] = defaultdict(float)
-    model_source: dict[str, str] = {}
+    errors: list[str] = []
 
     def accumulate_daily(dmap: dict[str, dict[str, TokenBucket]]) -> None:
         for day, models in dmap.items():
             for model, bucket in models.items():
                 daily_models[day][model].add(bucket)
-                model_totals[model].add(bucket)
-                rates, src = pricing.rates_for(model)
-                model_cost[model] += bucket.cost(rates)
-                model_source[model] = src
 
-    errors: list[str] = []
+    def scan_all(label: str, paths: list[Path], fn) -> None:
+        for p in paths:
+            try:
+                summary, daily = fn(p, pricing)
+                if summary:
+                    sessions.append(summary)
+                if daily:
+                    accumulate_daily(daily)
+            except Exception as e:
+                errors.append(f"{label} {p}: {e}")
 
     if "claude" in wanted:
-        for p in _claude_paths():
-            try:
-                # skip empty-ish
-                s = scan_claude_file(p, pricing)
-                if s:
-                    sessions.append(s)
-                accumulate_daily(scan_claude_file_daily(p, pricing))
-            except Exception as e:
-                errors.append(f"claude {p}: {e}")
-
+        scan_all("claude", _claude_paths(), scan_claude_file)
     if "codex" in wanted:
-        for p in _codex_paths():
-            try:
-                s = scan_codex_file(p, pricing)
-                if s:
-                    sessions.append(s)
-                accumulate_daily(scan_codex_file_daily(p, pricing))
-            except Exception as e:
-                errors.append(f"codex {p}: {e}")
-
+        scan_all("codex", _codex_paths(), scan_codex_file)
     if "pi" in wanted:
-        for p in _pi_paths():
-            try:
-                s = scan_pi_file(p, pricing)
-                if s:
-                    sessions.append(s)
-                accumulate_daily(scan_pi_file_daily(p, pricing))
-            except Exception as e:
-                errors.append(f"pi {p}: {e}")
+        scan_all("pi", _pi_paths(), scan_pi_file)
 
-    # sort sessions
     sessions.sort(key=lambda s: s.updated_at or s.started_at or "", reverse=True)
 
-    # rebuild session costs already done; compute period totals from daily
-    def period_cost(days: set[str] | None = None) -> dict[str, Any]:
+    # Precompute each day's cost/tokens/models once (avoids re-walking 30+ times)
+    day_summaries: dict[str, dict[str, Any]] = {}
+    for day, models in daily_models.items():
         totals = TokenBucket()
         by_model: dict[str, dict[str, Any]] = {}
         cost = 0.0
-        for day, models in daily_models.items():
+        for model, b in models.items():
+            totals.add(b)
+            rates, src = pricing.rates_for(model)
+            c = b.cost(rates)
+            cost += c
+            by_model[model] = {
+                "input": b.input,
+                "output": b.output,
+                "cacheRead": b.cache_read,
+                "cacheWrite": b.cache_write,
+                "cost": c,
+                "pricing": src,
+                "rates": rates,
+            }
+        day_summaries[day] = {
+            "cost": cost,
+            "tokens": {
+                "input": totals.input,
+                "output": totals.output,
+                "cacheRead": totals.cache_read,
+                "cacheWrite": totals.cache_write,
+            },
+            "models": by_model,
+        }
+
+    def merge_days(days: set[str] | None = None) -> dict[str, Any]:
+        totals = TokenBucket()
+        by_model: dict[str, dict[str, Any]] = {}
+        cost = 0.0
+        for day, summary in day_summaries.items():
             if days is not None and day not in days:
                 continue
-            for model, b in models.items():
-                totals.add(b)
-                rates, src = pricing.rates_for(model)
-                c = b.cost(rates)
-                cost += c
-                slot = by_model.setdefault(
+            cost += summary["cost"]
+            t = summary["tokens"]
+            totals.input += t["input"]
+            totals.output += t["output"]
+            totals.cache_read += t["cacheRead"]
+            totals.cache_write += t["cacheWrite"]
+            for model, slot in summary["models"].items():
+                acc = by_model.setdefault(
                     model,
                     {
                         "input": 0,
@@ -631,15 +611,15 @@ def build_report(agents: Iterable[str] | None = None) -> dict[str, Any]:
                         "cacheRead": 0,
                         "cacheWrite": 0,
                         "cost": 0.0,
-                        "pricing": src,
-                        "rates": rates,
+                        "pricing": slot["pricing"],
+                        "rates": slot["rates"],
                     },
                 )
-                slot["input"] += b.input
-                slot["output"] += b.output
-                slot["cacheRead"] += b.cache_read
-                slot["cacheWrite"] += b.cache_write
-                slot["cost"] += c
+                acc["input"] += slot["input"]
+                acc["output"] += slot["output"]
+                acc["cacheRead"] += slot["cacheRead"]
+                acc["cacheWrite"] += slot["cacheWrite"]
+                acc["cost"] += slot["cost"]
         return {
             "cost": cost,
             "tokens": {
@@ -654,26 +634,28 @@ def build_report(agents: Iterable[str] | None = None) -> dict[str, Any]:
     today = datetime.now().astimezone().date()
     today_s = today.isoformat()
     week_days = {(today.fromordinal(today.toordinal() - i)).isoformat() for i in range(7)}
-    # month: same calendar month
     month_prefix = today.strftime("%Y-%m")
-    month_days = {d for d in daily_models if d.startswith(month_prefix)}
+    month_days = {d for d in day_summaries if d.startswith(month_prefix)}
 
-    # daily series (last 30 days)
+    empty_day = {
+        "cost": 0.0,
+        "tokens": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+    }
     series = []
     for i in range(29, -1, -1):
         d = (today.fromordinal(today.toordinal() - i)).isoformat()
-        p = period_cost({d})
-        series.append({"date": d, "cost": p["cost"], "tokens": p["tokens"]})
+        s = day_summaries.get(d, empty_day)
+        series.append({"date": d, "cost": s["cost"], "tokens": s["tokens"]})
 
-    all_time = period_cost(None)
+    all_time = merge_days(None)
 
     return {
         "generatedAt": datetime.now().astimezone().isoformat(),
         "pricingModels": len(pricing.by_id),
         "periods": {
-            "today": period_cost({today_s}),
-            "week": period_cost(week_days),
-            "month": period_cost(month_days),
+            "today": merge_days({today_s}),
+            "week": merge_days(week_days),
+            "month": merge_days(month_days),
             "all": all_time,
         },
         "daily": series,

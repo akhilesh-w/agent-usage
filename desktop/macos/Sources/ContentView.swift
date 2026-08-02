@@ -14,7 +14,7 @@ struct ContentView: View {
                 VStack(spacing: 14) {
                     ProgressView()
                         .controlSize(.large)
-                    Text("Starting Agent Readout…")
+                    Text("Starting Agent Usage…")
                         .font(.system(size: 15, weight: .medium))
                         .foregroundStyle(.secondary)
                     if let msg = runtime.statusMessage {

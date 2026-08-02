@@ -1,4 +1,4 @@
-/* Closely mirrors Readout's macOS dark dashboard chrome */
+/* macOS-dark dashboard chrome */
 :root {
   --bg: #1a1a1c;
   --bg-sidebar: #141416;
@@ -268,7 +268,7 @@ body {
 
 canvas { width: 100%; display: block; }
 
-/* Model bars — colored like Readout */
+/* Model bars */
 .model-bars { display: flex; flex-direction: column; gap: 10px; }
 .mbar {
   display: grid;
@@ -309,7 +309,7 @@ canvas { width: 100%; display: block; }
   font-variant-numeric: tabular-nums;
 }
 
-/* Recent sessions — Readout style */
+/* Recent sessions */
 .recent-list { display: flex; flex-direction: column; }
 .rrow {
   display: grid;

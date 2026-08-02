@@ -1,111 +1,97 @@
-# Agent Readout
+# Agent Usage
 
-A local dashboard for **Claude Code**, **Codex**, and **pi** session usage.
+Local dashboard for **Claude Code**, **Codex**, and **pi** session usage.
 
-It runs on your machine, reads your local session logs, and never uploads anything. Costs are estimated from API list prices (subscriptions may bill differently).
+Runs on your machine, reads your session logs, estimates API spend. Nothing is uploaded.
 
 ---
 
 ## Quick start
 
-### Option A — Web (browser)
+### Web (browser)
 
 ```bash
-git clone git@github.com:akhilesh-w/agent-readout.git
-cd agent-readout
-python3 -m agent_readout
+git clone git@github.com:akhilesh-w/agent-usage.git
+cd agent-usage
+python3 -m agent_usage
 ```
 
 Opens [http://127.0.0.1:7840](http://127.0.0.1:7840).
 
-**Needs:** Python 3.9+
+Requires Python 3.9+.
 
----
-
-### Option B — macOS app (Raycast / Dock / Spotlight)
-
-Build a normal `.app` once:
+### macOS app (Raycast / Dock / Spotlight)
 
 ```bash
 ./scripts/build-macos-app.sh
-open "dist/Agent Readout.app"
+open "dist/Agent Usage.app"
 ```
 
-Optional install:
+Optional:
 
 ```bash
-cp -R "dist/Agent Readout.app" /Applications/
+cp -R "dist/Agent Usage.app" /Applications/
 ```
 
-Then open it like any other Mac app, or add it in **Raycast → Open App**.
+Then open from Raycast (**Open App**), Spotlight, or the Dock.
 
-**Needs:** Python 3 on the Mac (the app shells out to it for scanning), plus macOS 13+
-
----
-
-## What you get
-
-| View | Contents |
-|------|----------|
-| **Overview** | Spend totals, activity, cost-by-model, recent sessions |
-| **Sessions** | Searchable list across Claude / Codex / pi |
-| **Costs** | Per-model breakdown for today / week / month / all time |
-
-Model names are normalized (e.g. `Opus 4.8`, `Fable 5`, `Grok 4.5`). Pricing comes from a bundled catalog you can refresh (see below).
+Requires Python 3 on the Mac (the app uses it for scanning) and macOS 13+.
 
 ---
 
-## What it reads
+## Features
 
-| Agent | Location |
-|-------|----------|
+| View | What it shows |
+|------|----------------|
+| **Overview** | Totals, activity charts, cost by model, recent sessions |
+| **Sessions** | Searchable Claude / Codex / pi history |
+| **Costs** | Per-model breakdown (today / week / month / all time) |
+
+Friendly model names (`Opus 4.8`, `Fable 5`, `Grok 4.5`, …) and a refreshable pricing catalog.
+
+---
+
+## Data sources
+
+| Agent | Path |
+|-------|------|
 | Claude Code | `~/.claude/projects/**/*.jsonl` |
-| Codex | `~/.codex/sessions/**`, `~/.codex/archived_sessions/**` |
+| Codex | `~/.codex/sessions/**`, `archived_sessions/**` |
 | pi | `~/.pi/agent/sessions/**/*.jsonl` |
 
-Only these local files. Nothing is sent to a server.
-
 ---
 
-## Pricing catalog
+## Pricing
 
 Rates live in `data/pricing.json` (USD per 1M tokens).
 
-Refresh from a local [pi](https://github.com/earendil-works/pi) install when models change:
-
 ```bash
-pi update --models          # optional
-python3 scripts/sync_pricing.py
+pi update --models                 # optional, if you use pi
+python3 scripts/sync_pricing.py    # refresh catalog
 ```
 
-If a brand-new model isn’t in the catalog yet, family fallbacks still estimate cost (opus / sonnet / fable / grok / gpt-5, …).
+Unknown models fall back to family heuristics (opus / sonnet / fable / grok / gpt-5, …).
+
+Costs are **API list-price estimates**. Subscriptions may bill differently.
 
 ---
 
-## Project layout
+## Layout
 
 ```text
-agent_readout/     Python core (scanner + local HTTP API)
-web/static/        Dashboard UI
-desktop/macos/     Swift app (WKWebView shell)
-scripts/           build-macos-app.sh, sync_pricing.py
-data/pricing.json  Model rates
+agent_usage/           Python core (scanner + local HTTP API)
+web/static/            Dashboard UI
+desktop/macos/         Swift host (WKWebView shell today)
+scripts/               build-macos-app.sh, sync_pricing.py
+data/pricing.json
 ```
-
-Both the web and macOS targets share the same core and UI.
 
 ---
 
-## Development
+## Dev
 
 ```bash
-# Web, with browser
-python3 -m agent_readout
-
-# Or without auto-open
-python3 web/run.py
-
-# Rebuild macOS app after UI/Swift changes
+python3 -m agent_usage
 ./scripts/build-macos-app.sh
 ```
 
@@ -113,9 +99,9 @@ python3 web/run.py
 
 ## Privacy
 
-- Listens on `127.0.0.1` only  
-- No accounts, analytics, or network calls for usage data  
-- Session JSONL never leaves your machine  
+- Binds to `127.0.0.1` only  
+- No accounts or telemetry  
+- Session files stay on your machine  
 
 ---
 

@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct AgentReadoutApp: App {
+struct AgentUsageApp: App {
     @StateObject private var runtime = DashboardRuntime()
 
     var body: some Scene {

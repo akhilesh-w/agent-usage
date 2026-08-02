@@ -13,7 +13,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from agent_readout.scanner import build_report
+from agent_usage.scanner import build_report
 
 PACKAGE_DIR = Path(__file__).resolve().parent
 REPO_ROOT = PACKAGE_DIR.parent
@@ -154,7 +154,7 @@ def run_browser(
 
     server = DashboardServer(host=host, port=port, static_dir=static)
     url = server.start(background=True)
-    print(f"Agent Readout → {url}")
+    print(f"Agent Usage → {url}")
     print("Scanning ~/.claude, ~/.codex, ~/.pi …")
     if open_browser:
         try:

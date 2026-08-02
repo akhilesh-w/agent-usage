@@ -94,10 +94,10 @@ final class DashboardRuntime: ObservableObject {
             return URL(fileURLWithPath: env, isDirectory: true)
         }
 
-        // 2) Next to the .app: AgentReadout.app/../../ (dev) or Resources
+        // 2) Next to the .app: AgentUsage.app/../../ (dev) or Resources
         let bundle = Bundle.main.bundleURL
         let resourceRoot = bundle.appendingPathComponent("Contents/Resources", isDirectory: true)
-        if FileManager.default.fileExists(atPath: resourceRoot.appendingPathComponent("agent_readout").path) {
+        if FileManager.default.fileExists(atPath: resourceRoot.appendingPathComponent("agent_usage").path) {
             return resourceRoot
         }
 
@@ -105,7 +105,7 @@ final class DashboardRuntime: ObservableObject {
         var url = bundle
         for _ in 0 ..< 8 {
             let candidate = url
-            if FileManager.default.fileExists(atPath: candidate.appendingPathComponent("agent_readout").path),
+            if FileManager.default.fileExists(atPath: candidate.appendingPathComponent("agent_usage").path),
                FileManager.default.fileExists(atPath: candidate.appendingPathComponent("web/static").path)
             {
                 return candidate
@@ -115,12 +115,12 @@ final class DashboardRuntime: ObservableObject {
 
         // 4) cwd
         let cwd = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
-        if FileManager.default.fileExists(atPath: cwd.appendingPathComponent("agent_readout").path) {
+        if FileManager.default.fileExists(atPath: cwd.appendingPathComponent("agent_usage").path) {
             return cwd
         }
 
         throw RuntimeError(
-            "Could not find Agent Readout project root (agent_readout/ + web/static/). "
+            "Could not find Agent Usage project root (agent_usage/ + web/static/). "
                 + "Set AGENT_READOUT_ROOT or run the app built from this repo."
         )
     }
@@ -153,7 +153,7 @@ final class DashboardRuntime: ObservableObject {
         root = os.environ.get("AGENT_READOUT_ROOT") or r"\(root.path)"
         sys.path.insert(0, root)
         os.environ["AGENT_READOUT_ROOT"] = root
-        from agent_readout.server_app import run_browser
+        from agent_usage.server_app import run_browser
         run_browser(open_browser=False, port=\(port))
         """
         process.arguments = ["-c", py]

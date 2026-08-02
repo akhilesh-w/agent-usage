@@ -6,11 +6,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="$ROOT/desktop/macos/Sources"
 OUT_DIR="${1:-$ROOT/dist}"
-APP="$OUT_DIR/Agent Readout.app"
-BIN_NAME="AgentReadout"
+APP="$OUT_DIR/Agent Usage.app"
+BIN_NAME="AgentUsage"
 SDK="$(xcrun --show-sdk-path)"
 
-echo "→ Building Agent Readout.app"
+echo "→ Building Agent Usage.app"
 echo "  SDK: $SDK"
 echo "  Out: $APP"
 
@@ -39,7 +39,7 @@ cp "$ROOT/desktop/macos/Info.plist" "$APP/Contents/Info.plist"
 rsync -a --delete \
   --exclude '__pycache__' \
   --exclude '*.pyc' \
-  "$ROOT/agent_readout/" "$APP/Contents/Resources/agent_readout/"
+  "$ROOT/agent_usage/" "$APP/Contents/Resources/agent_usage/"
 rsync -a --delete "$ROOT/web/static/" "$APP/Contents/Resources/web/static/"
 rsync -a --delete "$ROOT/data/" "$APP/Contents/Resources/data/"
 
@@ -53,6 +53,6 @@ echo
 echo "Run:"
 echo "  open \"$APP\""
 echo
-echo "Raycast: add Application → pick “Agent Readout”, or"
-echo "  open -a \"Agent Readout\""
+echo "Raycast: add Application → pick “Agent Usage”, or"
+echo "  open -a \"Agent Usage\""
 echo "(optionally copy the .app to /Applications first)"

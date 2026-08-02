@@ -59,7 +59,7 @@ function escapeHtml(s) {
     .replaceAll('"', "&quot;");
 }
 
-/** Friendly labels like Readout: "Opus 4.8", "Fable 5", "GPT-5.5" */
+/** Friendly labels: "Opus 4.8", "Fable 5", "GPT-5.5" */
 function friendlyModel(id) {
   if (!id) return "Unknown";
   let s = String(id);

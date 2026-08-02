@@ -1,35 +1,30 @@
 # Agent Readout
 
-Local dashboard for **Claude Code**, **Codex**, and **pi** usage. Runs on **your machine** only.
+A local dashboard for **Claude Code**, **Codex**, and **pi** session usage.
 
-## Two ways to run
-
-| Target | What | How |
-|--------|------|-----|
-| **Web** | Browser UI + local server | `python3 -m agent_readout` |
-| **macOS app** | Swift + WKWebView window (Raycast / Dock / Spotlight) | Build once, then open the `.app` |
-
-There is **no** cloud multi-user mode. Each person runs it locally against their own session logs.
+It runs on your machine, reads your local session logs, and never uploads anything. Costs are estimated from API list prices (subscriptions may bill differently).
 
 ---
 
-### Web
+## Quick start
+
+### Option A — Web (browser)
 
 ```bash
-cd /path/to/agent-readout
+git clone git@github.com:akhilesh-w/agent-readout.git
+cd agent-readout
 python3 -m agent_readout
-# → http://127.0.0.1:7840
 ```
 
-Requires Python 3.10+ (3.9 often works).
+Opens [http://127.0.0.1:7840](http://127.0.0.1:7840).
+
+**Needs:** Python 3.9+
 
 ---
 
-### macOS app (Swift)
+### Option B — macOS app (Raycast / Dock / Spotlight)
 
-Double-clickable app. Same UI in a native window. Suitable for **Raycast** (“Open App”), Dock, Spotlight.
-
-**Build** (Command Line Tools is enough; full Xcode optional):
+Build a normal `.app` once:
 
 ```bash
 ./scripts/build-macos-app.sh
@@ -42,39 +37,87 @@ Optional install:
 cp -R "dist/Agent Readout.app" /Applications/
 ```
 
-**Raycast:** Add Command → Application → choose **Agent Readout**.
+Then open it like any other Mac app, or add it in **Raycast → Open App**.
 
-The app starts a local Python scanner (needs `python3` on the machine) and shows the UI in **WKWebView**. Quit the app to stop the server.
+**Needs:** Python 3 on the Mac (the app shells out to it for scanning), plus macOS 13+
 
 ---
 
-## What it scans
+## What you get
 
-| Agent | Path |
-|-------|------|
+| View | Contents |
+|------|----------|
+| **Overview** | Spend totals, activity, cost-by-model, recent sessions |
+| **Sessions** | Searchable list across Claude / Codex / pi |
+| **Costs** | Per-model breakdown for today / week / month / all time |
+
+Model names are normalized (e.g. `Opus 4.8`, `Fable 5`, `Grok 4.5`). Pricing comes from a bundled catalog you can refresh (see below).
+
+---
+
+## What it reads
+
+| Agent | Location |
+|-------|----------|
 | Claude Code | `~/.claude/projects/**/*.jsonl` |
-| Codex | `~/.codex/sessions/**`, `archived_sessions/**` |
+| Codex | `~/.codex/sessions/**`, `~/.codex/archived_sessions/**` |
 | pi | `~/.pi/agent/sessions/**/*.jsonl` |
 
-## Pricing
+Only these local files. Nothing is sent to a server.
+
+---
+
+## Pricing catalog
+
+Rates live in `data/pricing.json` (USD per 1M tokens).
+
+Refresh from a local [pi](https://github.com/earendil-works/pi) install when models change:
 
 ```bash
-python3 scripts/sync_pricing.py   # optional refresh from local pi catalogs
+pi update --models          # optional
+python3 scripts/sync_pricing.py
 ```
 
-## Layout
+If a brand-new model isn’t in the catalog yet, family fallbacks still estimate cost (opus / sonnet / fable / grok / gpt-5, …).
 
+---
+
+## Project layout
+
+```text
+agent_readout/     Python core (scanner + local HTTP API)
+web/static/        Dashboard UI
+desktop/macos/     Swift app (WKWebView shell)
+scripts/           build-macos-app.sh, sync_pricing.py
+data/pricing.json  Model rates
 ```
-agent_readout/          # shared Python core
-web/static/             # UI
-desktop/macos/          # Swift sources + Info.plist
-scripts/build-macos-app.sh
-data/pricing.json
+
+Both the web and macOS targets share the same core and UI.
+
+---
+
+## Development
+
+```bash
+# Web, with browser
+python3 -m agent_readout
+
+# Or without auto-open
+python3 web/run.py
+
+# Rebuild macOS app after UI/Swift changes
+./scripts/build-macos-app.sh
 ```
+
+---
 
 ## Privacy
 
-Binds to `127.0.0.1` only. No accounts, no upload.
+- Listens on `127.0.0.1` only  
+- No accounts, analytics, or network calls for usage data  
+- Session JSONL never leaves your machine  
+
+---
 
 ## License
 

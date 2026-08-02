@@ -1,68 +1,50 @@
 # Agent Readout
 
-Local dashboard for **Claude Code**, **Codex**, and **pi** session usage — inspired by Readout’s UI, with current model pricing (including Fable, Sonnet 5, Opus 4.8+, Grok, GPT‑5.x).
+Local dashboard for **Claude Code**, **Codex**, and **pi** usage. Runs on **your machine** only.
 
-> Runs only on **your machine**. It reads local session logs. It is not a multi-tenant cloud app.
+## Two ways to run
 
-## Three ways to run it
+| Target | What | How |
+|--------|------|-----|
+| **Web** | Browser UI + local server | `python3 -m agent_readout` |
+| **macOS app** | Swift + WKWebView window (Raycast / Dock / Spotlight) | Build once, then open the `.app` |
 
-| Target | Best for | Command |
-|--------|----------|---------|
-| **1. Web** | Dev, simplest | `python3 -m agent_readout` |
-| **2. Desktop WebView** | Native window, light | `python3 desktop/webview/app.py` |
-| **3. Desktop Electron** | Packaged app / multi-OS releases | `cd desktop/electron && npm start` |
-
-GitHub Releases ship downloadable builds for each target (see [Releases](../../releases)).
+There is **no** cloud multi-user mode. Each person runs it locally against their own session logs.
 
 ---
 
-### 1 — Web (browser)
+### Web
 
 ```bash
-git clone <repo-url> agent-readout
-cd agent-readout
+cd /path/to/agent-readout
 python3 -m agent_readout
 # → http://127.0.0.1:7840
 ```
 
-Or: `python3 web/run.py`
-
-**Requires:** Python 3.10+ (stdlib only).
+Requires Python 3.10+ (3.9 often works).
 
 ---
 
-### 2 — Desktop WebView
+### macOS app (Swift)
 
-Native window around the same UI ([pywebview](https://pywebview.flowrl.com/)).
+Double-clickable app. Same UI in a native window. Suitable for **Raycast** (“Open App”), Dock, Spotlight.
 
-```bash
-pip install -r desktop/webview/requirements.txt
-python3 desktop/webview/app.py
-```
-
-**Requires:** Python 3.10+, pywebview (uses Cocoa/GTK/Edge WebView2 by platform).
-
----
-
-### 3 — Desktop Electron
-
-Packaged shell that starts the local Python dashboard and shows it in an Electron window.
+**Build** (Command Line Tools is enough; full Xcode optional):
 
 ```bash
-cd desktop/electron
-npm install
-npm start
+./scripts/build-macos-app.sh
+open "dist/Agent Readout.app"
 ```
 
-Build installers:
+Optional install:
 
 ```bash
-npm run dist:mac    # .dmg / .zip
-npm run dist:win    # .exe
-npm run dist:linux  # AppImage
+cp -R "dist/Agent Readout.app" /Applications/
 ```
 
-**Requires:** Node 20+, Python 3 on `PATH` (scanner still runs in Python).
+**Raycast:** Add Command → Application → choose **Agent Readout**.
+
+The app starts a local Python scanner (needs `python3` on the machine) and shows the UI in **WKWebView**. Quit the app to stop the server.
 
 ---
 
@@ -77,41 +59,22 @@ npm run dist:linux  # AppImage
 ## Pricing
 
 ```bash
-# optional — refresh catalog from a local pi install
-pi update --models   # if you use pi
-python3 scripts/sync_pricing.py
+python3 scripts/sync_pricing.py   # optional refresh from local pi catalogs
 ```
 
-Unknown models fall back to family heuristics (opus/sonnet/fable/grok/…).  
-Costs are **API list-price estimates**; subscriptions may bill differently.
-
-## Repo layout
+## Layout
 
 ```
-agent_readout/          # shared Python core (scanner + HTTP API)
+agent_readout/          # shared Python core
 web/static/             # UI
-web/run.py              # web entry
-desktop/webview/        # pywebview app
-desktop/electron/       # Electron shell + electron-builder
-data/pricing.json       # model rates
-scripts/sync_pricing.py
-.github/workflows/release.yml
+desktop/macos/          # Swift sources + Info.plist
+scripts/build-macos-app.sh
+data/pricing.json
 ```
-
-## Release
-
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-CI builds web zip, macOS WebView app, and Electron artifacts for macOS / Windows / Linux and attaches them to the GitHub Release.
 
 ## Privacy
 
-- Binds to `127.0.0.1` only  
-- No accounts, no upload  
-- Session files never leave the machine that runs the app  
+Binds to `127.0.0.1` only. No accounts, no upload.
 
 ## License
 

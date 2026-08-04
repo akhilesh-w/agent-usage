@@ -1,6 +1,6 @@
 let REPORT = null;
 let costPeriod = "all";
-const agentFilter = new Set(["claude", "codex", "pi"]);
+const agentFilter = new Set(["claude", "codex", "pi", "opencode", "conductor"]);
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -95,7 +95,20 @@ function colorForModel(id, index) {
   if (s.includes("haiku")) return "#6e6e73";
   if (s.includes("gpt") || s.includes("codex")) return "#5b9fd4";
   if (s.includes("grok")) return "#bf5af2";
+  if (s.includes("minimax") || s.includes("opencode")) return "#34c759";
   return MODEL_COLORS[index % MODEL_COLORS.length];
+}
+
+function agentColor(a) {
+  return (
+    {
+      claude: "#e0b48a",
+      codex: "#7dd3fc",
+      pi: "#d8a0ff",
+      opencode: "#34c759",
+      conductor: "#ff9f0a",
+    }[a] || "#8e8e93"
+  );
 }
 
 function filteredSessions() {
@@ -141,10 +154,9 @@ function projectCounts(sessions) {
 }
 
 function agentBreakdown(sessions) {
-  const map = { claude: 0, codex: 0, pi: 0 };
+  const map = {};
   for (const s of sessions) {
-    if (map[s.agent] != null) map[s.agent]++;
-    else map[s.agent] = 1;
+    map[s.agent] = (map[s.agent] || 0) + 1;
   }
   return map;
 }
@@ -169,11 +181,13 @@ function renderOverview() {
   const topModel = modelEntries(all.models)[0];
   const topName = topModel ? friendlyModel(topModel[0]) : "—";
 
-  $("#summary").innerHTML = `You have <b>${projects.length}</b> projects with agent activity across
-    <b>${agents.claude || 0}</b> Claude,
-    <b>${agents.codex || 0}</b> Codex, and
-    <b>${agents.pi || 0}</b> pi sessions.
-    Top spend: <span class="hl">${escapeHtml(topName)}</span>.`;
+  const agentBits = Object.entries(agents)
+    .sort((a, b) => b[1] - a[1])
+    .map(([a, n]) => `<b>${n}</b> ${escapeHtml(a)}`)
+    .join(", ");
+  $("#summary").innerHTML = `You have <b>${projects.length}</b> projects with agent activity${
+    agentBits ? ` (${agentBits})` : ""
+  }. Top spend: <span class="hl">${escapeHtml(topName)}</span>.`;
 
   $("#stat-row").innerHTML = [
     [projects.length, "Projects", "dot-blue"],
@@ -257,9 +271,7 @@ function renderOverview() {
       <ul>${byAgent
         .map(
           ([a, n]) =>
-            `<li><span class="agent-pill"><i style="background:${
-              a === "claude" ? "#e0b48a" : a === "codex" ? "#7dd3fc" : "#d8a0ff"
-            }"></i>${escapeHtml(a)}</span><span>${n}</span></li>`
+            `<li><span class="agent-pill"><i style="background:${agentColor(a)}"></i>${escapeHtml(a)}</span><span>${n}</span></li>`
         )
         .join("")}</ul>
     </div>

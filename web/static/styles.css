@@ -207,6 +207,11 @@ body {
 .dot-green { background: var(--green); }
 .dot-gold { background: var(--gold); }
 .dot-purple { background: var(--purple); }
+.dot.claude { background: #e0b48a; }
+.dot.codex { background: #7dd3fc; }
+.dot.pi { background: #d8a0ff; }
+.dot.opencode { background: #34c759; }
+.dot.conductor { background: #ff9f0a; }
 
 /* Cards / grids */
 .card {
@@ -461,6 +466,8 @@ canvas { width: 100%; display: block; }
 .badge.claude { color: #e0b48a; }
 .badge.codex { color: #7dd3fc; }
 .badge.pi { color: #d8a0ff; }
+.badge.opencode { color: #34c759; }
+.badge.conductor { color: #ff9f0a; }
 .srow .t { font-weight: 600; font-size: 13px; }
 .srow .p {
   color: var(--text-2);

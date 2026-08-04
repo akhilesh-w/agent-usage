@@ -53,11 +53,15 @@ Friendly model names (`Opus 4.8`, `Fable 5`, `Grok 4.5`, …) and a refreshable 
 
 ## Data sources
 
-| Agent | Path |
-|-------|------|
-| Claude Code | `~/.claude/projects/**/*.jsonl` |
-| Codex | `~/.codex/sessions/**`, `archived_sessions/**` |
-| pi | `~/.pi/agent/sessions/**/*.jsonl` |
+| Agent | Path | Notes |
+|-------|------|--------|
+| Claude Code | `~/.claude/projects/**/*.jsonl` | Full token/cost usage |
+| Codex | `~/.codex/sessions/**`, `archived_sessions/**` | Full token/cost usage |
+| pi | `~/.pi/agent/sessions/**/*.jsonl` | Full token/cost usage |
+| OpenCode | `~/.local/share/opencode/opencode.db` | SQLite; tokens + cost |
+| Conductor | `~/Library/Application Support/com.conductor.app/conductor.db` | Sessions list (little/no usage data) |
+
+Sources are auto-detected if present. Toggle them in the sidebar.
 
 ---
 

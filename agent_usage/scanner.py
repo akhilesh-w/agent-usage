@@ -1,11 +1,20 @@
 #!/usr/bin/env python3
-"""Scan local Claude Code, Codex, and pi session logs for token usage."""
+"""Scan local agent session logs for token usage.
+
+Supported sources:
+  - Claude Code (~/.claude/projects JSONL)
+  - Codex (~/.codex sessions JSONL)
+  - pi (~/.pi/agent/sessions JSONL)
+  - OpenCode (~/.local/share/opencode/opencode.db)
+  - Conductor (macOS app SQLite — sessions only; little/no token usage)
+"""
 
 from __future__ import annotations
 
 import json
 import os
 import re
+import sqlite3
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -524,8 +533,293 @@ def _pi_paths() -> list[Path]:
     return list(root.rglob("*.jsonl"))
 
 
+def _opencode_db_path() -> Path | None:
+    candidates = [
+        HOME / ".local" / "share" / "opencode" / "opencode.db",
+        HOME / "Library" / "Application Support" / "opencode" / "opencode.db",
+    ]
+    for p in candidates:
+        if p.is_file():
+            return p
+    return None
+
+
+def _conductor_db_path() -> Path | None:
+    p = HOME / "Library" / "Application Support" / "com.conductor.app" / "conductor.db"
+    return p if p.is_file() else None
+
+
+def _ms_to_dt(ms: Any) -> datetime | None:
+    try:
+        v = float(ms)
+    except (TypeError, ValueError):
+        return None
+    if v > 1e12:
+        v /= 1000.0
+    try:
+        return datetime.fromtimestamp(v, tz=timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def _parse_opencode_model(raw: Any) -> str:
+    if raw is None:
+        return "unknown"
+    if isinstance(raw, dict):
+        mid = raw.get("id") or raw.get("modelID") or raw.get("modelId")
+        prov = raw.get("providerID") or raw.get("providerId") or raw.get("provider")
+        if mid and prov:
+            return f"{prov}/{mid}"
+        if mid:
+            return str(mid)
+        return json.dumps(raw)[:80]
+    s = str(raw).strip()
+    if not s:
+        return "unknown"
+    if s.startswith("{"):
+        try:
+            return _parse_opencode_model(json.loads(s))
+        except json.JSONDecodeError:
+            pass
+    return s
+
+
+def scan_opencode(
+    pricing: Pricing, db_path: Path | None = None
+) -> tuple[list[SessionSummary], dict[str, dict[str, TokenBucket]]]:
+    """Read OpenCode SQLite DB (session totals + step-finish parts for daily)."""
+    path = db_path or _opencode_db_path()
+    empty_daily: dict[str, dict[str, TokenBucket]] = defaultdict(lambda: defaultdict(TokenBucket))
+    if not path:
+        return [], empty_daily
+
+    sessions: list[SessionSummary] = []
+    daily: dict[str, dict[str, TokenBucket]] = defaultdict(lambda: defaultdict(TokenBucket))
+
+    uri = f"file:{path}?mode=ro"
+    conn = sqlite3.connect(uri, uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        # Prefer step-finish parts for usage (accurate). Fall back to session row totals.
+        part_usage: dict[str, TokenBucket] = defaultdict(TokenBucket)
+        part_cost: dict[str, float] = defaultdict(float)
+        part_models: dict[str, set[str]] = defaultdict(set)
+
+        try:
+            rows = conn.execute(
+                """
+                SELECT session_id, time_created, data
+                FROM part
+                WHERE data LIKE '%step-finish%'
+                """
+            ).fetchall()
+        except sqlite3.Error:
+            rows = []
+
+        for row in rows:
+            try:
+                data = json.loads(row["data"] or "{}")
+            except json.JSONDecodeError:
+                continue
+            if data.get("type") != "step-finish":
+                continue
+            tokens = data.get("tokens") or {}
+            if not isinstance(tokens, dict):
+                continue
+            cache = tokens.get("cache") if isinstance(tokens.get("cache"), dict) else {}
+            b = TokenBucket(
+                input=int(tokens.get("input") or 0),
+                output=int(tokens.get("output") or 0),
+                cache_read=int(cache.get("read") or 0),
+                cache_write=int(cache.get("write") or 0),
+            )
+            sid = str(row["session_id"])
+            part_usage[sid].add(b)
+            embedded = data.get("cost")
+            if isinstance(embedded, (int, float)):
+                part_cost[sid] += float(embedded)
+            day = _day_key(_ms_to_dt(row["time_created"]))
+            # model often lives on the session, not the part — fill later
+            if day:
+                # temporary key; re-key after we know session models
+                daily[day][f"__sid__:{sid}"].add(b)
+
+        try:
+            sess_rows = conn.execute(
+                """
+                SELECT id, title, directory, model, cost,
+                       tokens_input, tokens_output, tokens_cache_read, tokens_cache_write,
+                       time_created, time_updated
+                FROM session
+                """
+            ).fetchall()
+        except sqlite3.Error:
+            sess_rows = []
+
+        session_model: dict[str, str] = {}
+        for row in sess_rows:
+            sid = str(row["id"])
+            model = _parse_opencode_model(row["model"])
+            if not model or model == "unknown":
+                model = "opencode/unknown"
+            session_model[sid] = model
+
+            if sid in part_usage:
+                totals = part_usage[sid]
+                cost = part_cost[sid]
+                if cost <= 0:
+                    rates, _ = pricing.rates_for(model)
+                    cost = totals.cost(rates)
+            else:
+                totals = TokenBucket(
+                    input=int(row["tokens_input"] or 0),
+                    output=int(row["tokens_output"] or 0),
+                    cache_read=int(row["tokens_cache_read"] or 0),
+                    cache_write=int(row["tokens_cache_write"] or 0),
+                )
+                cost = float(row["cost"] or 0)
+                if cost <= 0 and (totals.input or totals.output or totals.cache_read or totals.cache_write):
+                    rates, _ = pricing.rates_for(model)
+                    cost = totals.cost(rates)
+                # attribute session totals to created day if no parts
+                day = _day_key(_ms_to_dt(row["time_created"]))
+                if day and (totals.input or totals.output or totals.cache_read or totals.cache_write):
+                    daily[day][model].add(totals)
+
+            if not totals.input and not totals.output and not totals.cache_read and not cost:
+                # still list empty sessions lightly
+                pass
+
+            started = _ms_to_dt(row["time_created"])
+            updated = _ms_to_dt(row["time_updated"]) or started
+            cwd = row["directory"] or None
+            title = (row["title"] or "").strip() or None
+
+            sessions.append(
+                SessionSummary(
+                    id=sid,
+                    agent="opencode",
+                    cwd=cwd,
+                    project=_project_from_cwd(cwd),
+                    started_at=started.isoformat() if started else None,
+                    updated_at=updated.isoformat() if updated else None,
+                    models=[model],
+                    tokens={
+                        "input": totals.input,
+                        "output": totals.output,
+                        "cacheRead": totals.cache_read,
+                        "cacheWrite": totals.cache_write,
+                    },
+                    cost=cost,
+                    message_preview=title,
+                    path=str(path),
+                )
+            )
+
+        # Re-key temporary daily sid buckets to real model names
+        fixed: dict[str, dict[str, TokenBucket]] = defaultdict(lambda: defaultdict(TokenBucket))
+        for day, models in daily.items():
+            for key, bucket in models.items():
+                if key.startswith("__sid__:"):
+                    sid = key.split(":", 1)[1]
+                    model = session_model.get(sid, "opencode/unknown")
+                    fixed[day][model].add(bucket)
+                else:
+                    fixed[day][key].add(bucket)
+        daily = fixed
+    finally:
+        conn.close()
+
+    return sessions, daily
+
+
+def scan_conductor(
+    pricing: Pricing, db_path: Path | None = None
+) -> tuple[list[SessionSummary], dict[str, dict[str, TokenBucket]]]:
+    """Conductor app sessions (macOS). Usage tokens are usually absent."""
+    path = db_path or _conductor_db_path()
+    empty_daily: dict[str, dict[str, TokenBucket]] = defaultdict(lambda: defaultdict(TokenBucket))
+    if not path:
+        return [], empty_daily
+
+    sessions: list[SessionSummary] = []
+    uri = f"file:{path}?mode=ro"
+    conn = sqlite3.connect(uri, uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        try:
+            rows = conn.execute(
+                """
+                SELECT s.id, s.title, s.model, s.agent_type, s.status,
+                       s.context_token_count, s.created_at, s.updated_at,
+                       w.directory_name, r.name AS repo_name, r.root_path
+                FROM sessions s
+                LEFT JOIN workspaces w ON s.workspace_id = w.id
+                LEFT JOIN repos r ON w.repository_id = r.id
+                """
+            ).fetchall()
+        except sqlite3.Error:
+            rows = conn.execute(
+                "SELECT id, title, model, agent_type, status, context_token_count, created_at, updated_at FROM sessions"
+            ).fetchall()
+
+        for row in rows:
+            model_raw = row["model"] or "unknown"
+            agent_type = (row["agent_type"] or "").strip().lower()
+            # Conductor hosts Claude/Codex agents — label model helpfully
+            if agent_type and model_raw and model_raw != "unknown":
+                if not str(model_raw).startswith("claude") and agent_type == "claude":
+                    model = f"claude/{model_raw}"
+                elif agent_type == "codex" and not str(model_raw).startswith("gpt"):
+                    model = f"codex/{model_raw}"
+                else:
+                    model = str(model_raw)
+            else:
+                model = str(model_raw)
+
+            cwd = None
+            project = None
+            try:
+                cwd = row["root_path"] or None
+                project = row["repo_name"] or row["directory_name"] or _project_from_cwd(cwd)
+            except (IndexError, KeyError):
+                project = None
+
+            started = _parse_ts(row["created_at"])
+            updated = _parse_ts(row["updated_at"]) or started
+            title = (row["title"] or "").strip()
+            if title in ("", "Untitled"):
+                title = f"Conductor · {agent_type or 'session'}"
+
+            # No reliable per-token usage in DB today
+            tokens = {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}
+            ctx = int(row["context_token_count"] or 0)
+            if ctx:
+                tokens["input"] = ctx
+
+            sessions.append(
+                SessionSummary(
+                    id=str(row["id"]),
+                    agent="conductor",
+                    cwd=cwd,
+                    project=project,
+                    started_at=started.isoformat() if started else None,
+                    updated_at=updated.isoformat() if updated else None,
+                    models=[model] if model and model != "unknown" else [],
+                    tokens=tokens,
+                    cost=0.0,
+                    message_preview=title,
+                    path=str(path),
+                )
+            )
+    finally:
+        conn.close()
+
+    return sessions, empty_daily
+
+
 def build_report(agents: Iterable[str] | None = None) -> dict[str, Any]:
-    wanted = set(agents or ("claude", "codex", "pi"))
+    wanted = set(agents or ("claude", "codex", "pi", "opencode", "conductor"))
     pricing = Pricing()
 
     sessions: list[SessionSummary] = []
@@ -555,6 +849,20 @@ def build_report(agents: Iterable[str] | None = None) -> dict[str, Any]:
         scan_all("codex", _codex_paths(), scan_codex_file)
     if "pi" in wanted:
         scan_all("pi", _pi_paths(), scan_pi_file)
+    if "opencode" in wanted:
+        try:
+            oc_sessions, oc_daily = scan_opencode(pricing)
+            sessions.extend(oc_sessions)
+            accumulate_daily(oc_daily)
+        except Exception as e:
+            errors.append(f"opencode: {e}")
+    if "conductor" in wanted:
+        try:
+            c_sessions, c_daily = scan_conductor(pricing)
+            sessions.extend(c_sessions)
+            accumulate_daily(c_daily)
+        except Exception as e:
+            errors.append(f"conductor: {e}")
 
     sessions.sort(key=lambda s: s.updated_at or s.started_at or "", reverse=True)
 
